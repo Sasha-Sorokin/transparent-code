@@ -4,6 +4,10 @@ In overall, this enabled VS Code to have tranparent window which looks sick in c
 
 ======
 
+To install clone this repository and run "makepkg -i" or either download latest release archive (x86_64 only) and use "pacman -U code-[version]-[arch].pkg.tar.xz".
+
+======
+
 (i) For KDE be sure to either manually enable blur for code-oss windows or install plugin Force Blur https://store.kde.org/p/1294604 and in its settings add "code-oss" window class.
 
 (!) Sometimes it would fail to be transparent from cold start, just start one more window and reopen first (failed) one.
