@@ -1,0 +1,581 @@
+diff --git a/build/gulpfile.vscode.js b/build/gulpfile.vscode.js
+index 6bb695db68..4c9a0270d7 100644
+--- a/build/gulpfile.vscode.js
++++ b/build/gulpfile.vscode.js
+@@ -189,7 +189,8 @@ function getElectron(arch) {
+ 			platform: process.platform,
+ 			arch,
+ 			ffmpegChromium: true,
+-			keepDefaultApp: true
++			keepDefaultApp: true,
++			enableTransparentVisuals: true
+ 		});
+ 
+ 		return gulp.src('package.json')
+diff --git a/extensions/theme-defaults/themes/dark_defaults.json b/extensions/theme-defaults/themes/dark_defaults.json
+index 00c2ac8c36..9289223c10 100644
+--- a/extensions/theme-defaults/themes/dark_defaults.json
++++ b/extensions/theme-defaults/themes/dark_defaults.json
+@@ -2,21 +2,23 @@
+ 	"$schema": "vscode://schemas/color-theme",
+ 	"name": "Dark Default Colors",
+ 	"colors": {
+-		"editor.background": "#1E1E1E",
+-		"editor.foreground": "#D4D4D4",
+-		"editor.inactiveSelectionBackground": "#3A3D41",
+-		"editorIndentGuide.background": "#404040",
+-		"editorIndentGuide.activeBackground": "#707070",
++		"editor.background": "#0f0f0f60",
++		"editor.foreground": "#ffffff",
++		"editor.inactiveSelectionBackground": "#3A3D4188",
++		"editorIndentGuide.background": "#40404000",
++		"editorIndentGuide.activeBackground": "#70707000",
+ 		"editor.selectionHighlightBackground": "#ADD6FF26",
+ 		"list.dropBackground": "#383B3D",
+ 		"activityBarBadge.background": "#007ACC",
+ 		"sideBarTitle.foreground": "#BBBBBB",
+ 		"input.placeholderForeground": "#A6A6A6",
+-		"settings.textInputBackground": "#292929",
+-		"settings.numberInputBackground": "#292929",
+-		"menu.background": "#252526",
++		"settings.textInputBackground": "#29292988",
++		"settings.numberInputBackground": "#29292988",
++		"menu.background": "#222222",
+ 		"menu.foreground": "#CCCCCC",
+ 		"statusBarItem.remoteForeground": "#FFF",
+-		"statusBarItem.remoteBackground": "#16825D"
++		"statusBarItem.remoteBackground": "#16825D88",
++		"terminal.background": "#0f0f0f60",
++		"terminal.ansiBlack": "#0f0f0f60"
+ 	}
+ }
+\ No newline at end of file
+diff --git a/src/vs/code/electron-main/window.ts b/src/vs/code/electron-main/window.ts
+index c6d2f29b1b..9465569fd0 100644
+--- a/src/vs/code/electron-main/window.ts
++++ b/src/vs/code/electron-main/window.ts
+@@ -126,6 +126,7 @@ export class CodeWindow extends Disposable implements ICodeWindow {
+ 			minHeight: CodeWindow.MIN_HEIGHT,
+ 			show: !isFullscreenOrMaximized,
+ 			title: product.nameLong,
++			transparent: true,
+ 			webPreferences: {
+ 				// By default if Code is in the background, intervals and timeouts get throttled, so we
+ 				// want to enforce that Code stays in the foreground. This triggers a disable_hidden_
+@@ -196,6 +197,13 @@ export class CodeWindow extends Disposable implements ICodeWindow {
+ 			}
+ 		}
+ 
++		this._win.setBounds({
++			width: this.windowState.width || defaultWindowState().width!,
++			height: this.windowState.height || defaultWindowState().height!,
++			x: this.windowState.x || 0,
++			y: this.windowState.y || 0
++		});
++
+ 		if (isFullscreenOrMaximized) {
+ 			this._win.maximize();
+ 
+@@ -362,6 +370,17 @@ export class CodeWindow extends Disposable implements ICodeWindow {
+ 			}
+ 		});
+ 
++		// To prevent flashing, we set the window visible after the page has finished to load but before Code is loaded
++		if (this._win && !this._win.isVisible()) {
++			if (this.windowState.mode === WindowMode.Maximized) {
++				this._win.maximize();
++			}
++
++			if (!this._win.isVisible()) { // maximize also makes visible
++				this._win.show();
++			}
++		}
++
+ 		// Window Focus
+ 		this._win.on('focus', () => {
+ 			this._lastFocusTime = Date.now();
+diff --git a/src/vs/code/electron-main/windows.ts b/src/vs/code/electron-main/windows.ts
+index d4defa1962..08b4798d4c 100644
+--- a/src/vs/code/electron-main/windows.ts
++++ b/src/vs/code/electron-main/windows.ts
+@@ -380,6 +380,7 @@ export class WindowsManager extends Disposable implements IWindowsMainService {
+ 	}
+ 
+ 	open(openConfig: IOpenConfiguration): ICodeWindow[] {
++		setTimeout(() => {
+ 		this.logService.trace('windowsManager#open');
+ 		openConfig = this.validateOpenConfig(openConfig);
+ 
+@@ -511,8 +512,9 @@ export class WindowsManager extends Disposable implements IWindowsMainService {
+ 		if (openConfig.context === OpenContext.CLI && waitMarkerFileURI && usedWindows.length === 1 && usedWindows[0]) {
+ 			this.waitForWindowCloseOrLoad(usedWindows[0].id).then(() => fs.unlink(waitMarkerFileURI.fsPath, _error => undefined));
+ 		}
++		}, 100);
+ 
+-		return usedWindows;
++		return [];
+ 	}
+ 
+ 	private validateOpenConfig(config: IOpenConfiguration): IOpenConfiguration {
+diff --git a/src/vs/editor/browser/viewParts/minimap/minimap.ts b/src/vs/editor/browser/viewParts/minimap/minimap.ts
+index 1182f2ee8a..1eeffb0fc8 100644
+--- a/src/vs/editor/browser/viewParts/minimap/minimap.ts
++++ b/src/vs/editor/browser/viewParts/minimap/minimap.ts
+@@ -395,8 +395,8 @@ class MinimapBuffers {
+ 	private readonly _buffers: [ImageData, ImageData];
+ 	private _lastUsedBuffer: number;
+ 
+-	constructor(ctx: CanvasRenderingContext2D, WIDTH: number, HEIGHT: number, background: RGBA8) {
+-		this._backgroundFillData = MinimapBuffers._createBackgroundFillData(WIDTH, HEIGHT, background);
++	constructor(ctx: CanvasRenderingContext2D, WIDTH: number, HEIGHT: number, _background: RGBA8) {
++		this._backgroundFillData = MinimapBuffers._createBackgroundFillData(WIDTH, HEIGHT, new RGBA8(0,0,0,0));
+ 		this._buffers = [
+ 			ctx.createImageData(WIDTH, HEIGHT),
+ 			ctx.createImageData(WIDTH, HEIGHT)
+@@ -419,6 +419,7 @@ class MinimapBuffers {
+ 		const backgroundR = background.r;
+ 		const backgroundG = background.g;
+ 		const backgroundB = background.b;
++		const backgroundA = background.a;
+ 
+ 		const result = new Uint8ClampedArray(WIDTH * HEIGHT * 4);
+ 		let offset = 0;
+@@ -427,7 +428,7 @@ class MinimapBuffers {
+ 				result[offset] = backgroundR;
+ 				result[offset + 1] = backgroundG;
+ 				result[offset + 2] = backgroundB;
+-				result[offset + 3] = 255;
++				result[offset + 3] = backgroundA;
+ 				offset += 4;
+ 			}
+ 		}
+diff --git a/src/vs/editor/common/view/minimapCharRenderer.ts b/src/vs/editor/common/view/minimapCharRenderer.ts
+index 17c835d8c2..45141b8b2f 100644
+--- a/src/vs/editor/common/view/minimapCharRenderer.ts
++++ b/src/vs/editor/common/view/minimapCharRenderer.ts
+@@ -44,6 +44,7 @@ export class MinimapTokensColorTracker {
+ 			// Use a VM friendly data-type
+ 			this._colors[colorId] = new RGBA8(source.r, source.g, source.b, Math.round(source.a * 255));
+ 		}
++		colorMap[ColorId.DefaultBackground] = colorMap[ColorId.DefaultBackground].transparent(0);
+ 		let backgroundLuminosity = colorMap[ColorId.DefaultBackground].getRelativeLuminance();
+ 		this._backgroundIsLight = (backgroundLuminosity >= 0.5);
+ 		this._onDidChange.fire(undefined);
+@@ -135,10 +136,12 @@ export class MinimapCharRenderer {
+ 		const backgroundR = backgroundColor.r;
+ 		const backgroundG = backgroundColor.g;
+ 		const backgroundB = backgroundColor.b;
++		const backgroundA = backgroundColor.a;
+ 
+ 		const deltaR = color.r - backgroundR;
+ 		const deltaG = color.g - backgroundG;
+ 		const deltaB = color.b - backgroundB;
++		const deltaA = color.a - backgroundA;
+ 
+ 		const dest = target.data;
+ 		const sourceOffset = chIndex * Constants.x2_CHAR_HEIGHT * Constants.x2_CHAR_WIDTH;
+@@ -148,12 +151,14 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = backgroundR + deltaR * c;
+ 			dest[destOffset + 1] = backgroundG + deltaG * c;
+ 			dest[destOffset + 2] = backgroundB + deltaB * c;
++			dest[destOffset + 3] = backgroundA + deltaA * c;
+ 		}
+ 		{
+ 			const c = x2CharData[sourceOffset + 1] / 255;
+ 			dest[destOffset + 4] = backgroundR + deltaR * c;
+ 			dest[destOffset + 5] = backgroundG + deltaG * c;
+ 			dest[destOffset + 6] = backgroundB + deltaB * c;
++			dest[destOffset + 7] = backgroundA + deltaA * c;
+ 		}
+ 
+ 		destOffset += outWidth;
+@@ -162,12 +167,14 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = backgroundR + deltaR * c;
+ 			dest[destOffset + 1] = backgroundG + deltaG * c;
+ 			dest[destOffset + 2] = backgroundB + deltaB * c;
++			dest[destOffset + 3] = backgroundA + deltaA * c;
+ 		}
+ 		{
+ 			const c = x2CharData[sourceOffset + 3] / 255;
+ 			dest[destOffset + 4] = backgroundR + deltaR * c;
+ 			dest[destOffset + 5] = backgroundG + deltaG * c;
+ 			dest[destOffset + 6] = backgroundB + deltaB * c;
++			dest[destOffset + 7] = backgroundA + deltaA * c;
+ 		}
+ 
+ 		destOffset += outWidth;
+@@ -176,12 +183,14 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = backgroundR + deltaR * c;
+ 			dest[destOffset + 1] = backgroundG + deltaG * c;
+ 			dest[destOffset + 2] = backgroundB + deltaB * c;
++			dest[destOffset + 3] = backgroundA + deltaA * c;
+ 		}
+ 		{
+ 			const c = x2CharData[sourceOffset + 5] / 255;
+ 			dest[destOffset + 4] = backgroundR + deltaR * c;
+ 			dest[destOffset + 5] = backgroundG + deltaG * c;
+ 			dest[destOffset + 6] = backgroundB + deltaB * c;
++			dest[destOffset + 7] = backgroundA + deltaA * c;
+ 		}
+ 
+ 		destOffset += outWidth;
+@@ -190,12 +199,14 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = backgroundR + deltaR * c;
+ 			dest[destOffset + 1] = backgroundG + deltaG * c;
+ 			dest[destOffset + 2] = backgroundB + deltaB * c;
++			dest[destOffset + 3] = backgroundA + deltaA * c;
+ 		}
+ 		{
+ 			const c = x2CharData[sourceOffset + 7] / 255;
+ 			dest[destOffset + 4] = backgroundR + deltaR * c;
+ 			dest[destOffset + 5] = backgroundG + deltaG * c;
+ 			dest[destOffset + 6] = backgroundB + deltaB * c;
++			dest[destOffset + 7] = backgroundA + deltaA * c;
+ 		}
+ 	}
+ 
+@@ -212,10 +223,12 @@ export class MinimapCharRenderer {
+ 		const backgroundR = backgroundColor.r;
+ 		const backgroundG = backgroundColor.g;
+ 		const backgroundB = backgroundColor.b;
++		const backgroundA = backgroundColor.a;
+ 
+ 		const deltaR = color.r - backgroundR;
+ 		const deltaG = color.g - backgroundG;
+ 		const deltaB = color.b - backgroundB;
++		const deltaA = color.a - backgroundA;
+ 
+ 		const dest = target.data;
+ 		const sourceOffset = chIndex * Constants.x1_CHAR_HEIGHT * Constants.x1_CHAR_WIDTH;
+@@ -225,6 +238,7 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = backgroundR + deltaR * c;
+ 			dest[destOffset + 1] = backgroundG + deltaG * c;
+ 			dest[destOffset + 2] = backgroundB + deltaB * c;
++			dest[destOffset + 3] = backgroundA + deltaA * c;
+ 		}
+ 
+ 		destOffset += outWidth;
+@@ -233,6 +247,7 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = backgroundR + deltaR * c;
+ 			dest[destOffset + 1] = backgroundG + deltaG * c;
+ 			dest[destOffset + 2] = backgroundB + deltaB * c;
++			dest[destOffset + 3] = backgroundA + deltaA * c;
+ 		}
+ 	}
+ 
+@@ -249,14 +264,17 @@ export class MinimapCharRenderer {
+ 		const backgroundR = backgroundColor.r;
+ 		const backgroundG = backgroundColor.g;
+ 		const backgroundB = backgroundColor.b;
++		const backgroundA = backgroundColor.a;
+ 
+ 		const deltaR = color.r - backgroundR;
+ 		const deltaG = color.g - backgroundG;
+ 		const deltaB = color.b - backgroundB;
++		const deltaA = color.a - backgroundA;
+ 
+ 		const colorR = backgroundR + deltaR * c;
+ 		const colorG = backgroundG + deltaG * c;
+ 		const colorB = backgroundB + deltaB * c;
++		const colorA = backgroundA + deltaA * c;
+ 
+ 		const dest = target.data;
+ 		let destOffset = dy * outWidth + dx * Constants.RGBA_CHANNELS_CNT;
+@@ -264,11 +282,13 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = colorR;
+ 			dest[destOffset + 1] = colorG;
+ 			dest[destOffset + 2] = colorB;
++			dest[destOffset + 3] = colorA;
+ 		}
+ 		{
+ 			dest[destOffset + 4] = colorR;
+ 			dest[destOffset + 5] = colorG;
+ 			dest[destOffset + 6] = colorB;
++			dest[destOffset + 7] = colorA;
+ 		}
+ 
+ 		destOffset += outWidth;
+@@ -276,11 +296,13 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = colorR;
+ 			dest[destOffset + 1] = colorG;
+ 			dest[destOffset + 2] = colorB;
++			dest[destOffset + 3] = colorA;
+ 		}
+ 		{
+ 			dest[destOffset + 4] = colorR;
+ 			dest[destOffset + 5] = colorG;
+ 			dest[destOffset + 6] = colorB;
++			dest[destOffset + 7] = colorA;
+ 		}
+ 
+ 		destOffset += outWidth;
+@@ -288,11 +310,13 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = colorR;
+ 			dest[destOffset + 1] = colorG;
+ 			dest[destOffset + 2] = colorB;
++			dest[destOffset + 3] = colorA;
+ 		}
+ 		{
+ 			dest[destOffset + 4] = colorR;
+ 			dest[destOffset + 5] = colorG;
+ 			dest[destOffset + 6] = colorB;
++			dest[destOffset + 7] = colorA;
+ 		}
+ 
+ 		destOffset += outWidth;
+@@ -300,11 +324,13 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = colorR;
+ 			dest[destOffset + 1] = colorG;
+ 			dest[destOffset + 2] = colorB;
++			dest[destOffset + 3] = colorA;
+ 		}
+ 		{
+ 			dest[destOffset + 4] = colorR;
+ 			dest[destOffset + 5] = colorG;
+ 			dest[destOffset + 6] = colorB;
++			dest[destOffset + 7] = colorA;
+ 		}
+ 	}
+ 
+@@ -321,14 +347,17 @@ export class MinimapCharRenderer {
+ 		const backgroundR = backgroundColor.r;
+ 		const backgroundG = backgroundColor.g;
+ 		const backgroundB = backgroundColor.b;
++		const backgroundA = backgroundColor.a;
+ 
+ 		const deltaR = color.r - backgroundR;
+ 		const deltaG = color.g - backgroundG;
+ 		const deltaB = color.b - backgroundB;
++		const deltaA = color.a - backgroundA;
+ 
+ 		const colorR = backgroundR + deltaR * c;
+ 		const colorG = backgroundG + deltaG * c;
+ 		const colorB = backgroundB + deltaB * c;
++		const colorA = backgroundA + deltaA * c;
+ 
+ 		const dest = target.data;
+ 
+@@ -337,6 +366,7 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = colorR;
+ 			dest[destOffset + 1] = colorG;
+ 			dest[destOffset + 2] = colorB;
++			dest[destOffset + 3] = colorA;
+ 		}
+ 
+ 		destOffset += outWidth;
+@@ -344,6 +374,7 @@ export class MinimapCharRenderer {
+ 			dest[destOffset + 0] = colorR;
+ 			dest[destOffset + 1] = colorG;
+ 			dest[destOffset + 2] = colorB;
++			dest[destOffset + 3] = colorA;
+ 		}
+ 	}
+ }
+diff --git a/src/vs/platform/theme/common/colorRegistry.ts b/src/vs/platform/theme/common/colorRegistry.ts
+index 47b428fbb8..b5714f849f 100644
+--- a/src/vs/platform/theme/common/colorRegistry.ts
++++ b/src/vs/platform/theme/common/colorRegistry.ts
+@@ -200,7 +200,7 @@ export const textCodeBlockBackground = registerColor('textCodeBlock.background',
+ // ----- widgets
+ export const widgetShadow = registerColor('widget.shadow', { dark: '#000000', light: '#A8A8A8', hc: null }, nls.localize('widgetShadow', 'Shadow color of widgets such as find/replace inside the editor.'));
+ 
+-export const inputBackground = registerColor('input.background', { dark: '#3C3C3C', light: Color.white, hc: Color.black }, nls.localize('inputBoxBackground', "Input box background."));
++export const inputBackground = registerColor('input.background', { dark: '#3C3C3C30', light: Color.white, hc: Color.black }, nls.localize('inputBoxBackground', "Input box background."));
+ export const inputForeground = registerColor('input.foreground', { dark: foreground, light: foreground, hc: foreground }, nls.localize('inputBoxForeground', "Input box foreground."));
+ export const inputBorder = registerColor('input.border', { dark: null, light: null, hc: contrastBorder }, nls.localize('inputBoxBorder', "Input box border."));
+ export const inputActiveOptionBorder = registerColor('inputOption.activeBorder', { dark: '#007ACC00', light: '#007ACC00', hc: contrastBorder }, nls.localize('inputBoxActiveOptionBorder', "Border color of activated options in input fields."));
+@@ -217,7 +217,7 @@ export const inputValidationErrorBackground = registerColor('inputValidation.err
+ export const inputValidationErrorForeground = registerColor('inputValidation.errorForeground', { dark: null, light: null, hc: null }, nls.localize('inputValidationErrorForeground', "Input validation foreground color for error severity."));
+ export const inputValidationErrorBorder = registerColor('inputValidation.errorBorder', { dark: '#BE1100', light: '#BE1100', hc: contrastBorder }, nls.localize('inputValidationErrorBorder', "Input validation border color for error severity."));
+ 
+-export const selectBackground = registerColor('dropdown.background', { dark: '#3C3C3C', light: Color.white, hc: Color.black }, nls.localize('dropdownBackground', "Dropdown background."));
++export const selectBackground = registerColor('dropdown.background', { dark: '#3C3C3C30', light: Color.white, hc: Color.black }, nls.localize('dropdownBackground', "Dropdown background."));
+ export const selectListBackground = registerColor('dropdown.listBackground', { dark: null, light: null, hc: Color.black }, nls.localize('dropdownListBackground', "Dropdown list background."));
+ export const selectForeground = registerColor('dropdown.foreground', { dark: '#F0F0F0', light: null, hc: Color.white }, nls.localize('dropdownForeground', "Dropdown foreground."));
+ export const selectBorder = registerColor('dropdown.border', { dark: selectBackground, light: '#CECECE', hc: contrastBorder }, nls.localize('dropdownBorder', "Dropdown border."));
+@@ -228,12 +228,12 @@ export const simpleCheckboxBorder = registerColor('checkbox.border', { dark: sel
+ 
+ export const listFocusBackground = registerColor('list.focusBackground', { dark: '#062F4A', light: '#D6EBFF', hc: null }, nls.localize('listFocusBackground', "List/Tree background color for the focused item when the list/tree is active. An active list/tree has keyboard focus, an inactive does not."));
+ export const listFocusForeground = registerColor('list.focusForeground', { dark: null, light: null, hc: null }, nls.localize('listFocusForeground', "List/Tree foreground color for the focused item when the list/tree is active. An active list/tree has keyboard focus, an inactive does not."));
+-export const listActiveSelectionBackground = registerColor('list.activeSelectionBackground', { dark: '#094771', light: '#0074E8', hc: null }, nls.localize('listActiveSelectionBackground', "List/Tree background color for the selected item when the list/tree is active. An active list/tree has keyboard focus, an inactive does not."));
++export const listActiveSelectionBackground = registerColor('list.activeSelectionBackground', { dark: '#FFFFFF30', light: '#0074E8', hc: null }, nls.localize('listActiveSelectionBackground', "List/Tree background color for the selected item when the list/tree is active. An active list/tree has keyboard focus, an inactive does not."));
+ export const listActiveSelectionForeground = registerColor('list.activeSelectionForeground', { dark: Color.white, light: Color.white, hc: null }, nls.localize('listActiveSelectionForeground', "List/Tree foreground color for the selected item when the list/tree is active. An active list/tree has keyboard focus, an inactive does not."));
+-export const listInactiveSelectionBackground = registerColor('list.inactiveSelectionBackground', { dark: '#37373D', light: '#E4E6F1', hc: null }, nls.localize('listInactiveSelectionBackground', "List/Tree background color for the selected item when the list/tree is inactive. An active list/tree has keyboard focus, an inactive does not."));
++export const listInactiveSelectionBackground = registerColor('list.inactiveSelectionBackground', { dark: '#FFFFFF10', light: '#E4E6F1', hc: null }, nls.localize('listInactiveSelectionBackground', "List/Tree background color for the selected item when the list/tree is inactive. An active list/tree has keyboard focus, an inactive does not."));
+ export const listInactiveSelectionForeground = registerColor('list.inactiveSelectionForeground', { dark: null, light: null, hc: null }, nls.localize('listInactiveSelectionForeground', "List/Tree foreground color for the selected item when the list/tree is inactive. An active list/tree has keyboard focus, an inactive does not."));
+ export const listInactiveFocusBackground = registerColor('list.inactiveFocusBackground', { dark: null, light: null, hc: null }, nls.localize('listInactiveFocusBackground', "List/Tree background color for the focused item when the list/tree is inactive. An active list/tree has keyboard focus, an inactive does not."));
+-export const listHoverBackground = registerColor('list.hoverBackground', { dark: '#2A2D2E', light: '#F0F0F0', hc: null }, nls.localize('listHoverBackground', "List/Tree background when hovering over items using the mouse."));
++export const listHoverBackground = registerColor('list.hoverBackground', { dark: '#FFFFFF18', light: '#F0F0F0', hc: null }, nls.localize('listHoverBackground', "List/Tree background when hovering over items using the mouse."));
+ export const listHoverForeground = registerColor('list.hoverForeground', { dark: null, light: null, hc: null }, nls.localize('listHoverForeground', "List/Tree foreground when hovering over items using the mouse."));
+ export const listDropBackground = registerColor('list.dropBackground', { dark: listFocusBackground, light: listFocusBackground, hc: null }, nls.localize('listDropBackground', "List/Tree drag and drop background when moving items around using the mouse."));
+ export const listHighlightForeground = registerColor('list.highlightForeground', { dark: '#0097fb', light: '#0066BF', hc: focusBorder }, nls.localize('highlight', 'List/Tree foreground color of the match highlights when searching inside the list/tree.'));
+@@ -287,7 +287,7 @@ export const editorHintBorder = registerColor('editorHint.border', { dark: null,
+  * Because of bug https://monacotools.visualstudio.com/DefaultCollection/Monaco/_workitems/edit/13254
+  * we are *not* using the color white (or #ffffff, rgba(255,255,255)) but something very close to white.
+  */
+-export const editorBackground = registerColor('editor.background', { light: '#fffffe', dark: '#1E1E1E', hc: Color.black }, nls.localize('editorBackground', "Editor background color."));
++export const editorBackground = registerColor('editor.background', { light: '#ffffff20', dark: '#00000020', hc: Color.black }, nls.localize('editorBackground', "Editor background color."));
+ 
+ /**
+  * Editor foreground color.
+diff --git a/src/vs/platform/theme/electron-main/themeMainService.ts b/src/vs/platform/theme/electron-main/themeMainService.ts
+index 8dfe54bca5..1f4d6b08d7 100644
+--- a/src/vs/platform/theme/electron-main/themeMainService.ts
++++ b/src/vs/platform/theme/electron-main/themeMainService.ts
+@@ -8,9 +8,9 @@ import { systemPreferences, ipcMain as ipc } from 'electron';
+ import { IStateService } from 'vs/platform/state/common/state';
+ import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
+ 
+-const DEFAULT_BG_LIGHT = '#FFFFFF';
+-const DEFAULT_BG_DARK = '#1E1E1E';
+-const DEFAULT_BG_HC_BLACK = '#000000';
++const DEFAULT_BG_LIGHT = '#01FFFFFF';
++const DEFAULT_BG_DARK = '#011E1E1E';
++const DEFAULT_BG_HC_BLACK = '#01000000';
+ 
+ const THEME_STORAGE_KEY = 'theme';
+ const THEME_BG_STORAGE_KEY = 'themeBackground';
+@@ -62,6 +62,10 @@ export class ThemeMainService implements IThemeMainService {
+ 			background = '#171717'; // https://github.com/electron/electron/issues/5150
+ 		}
+ 
++		if (background.length == 7 && background[0] == "#") {
++			background = "#01" + background.split("#")[1];
++		}
++
+ 		return background;
+ 	}
+ }
+\ No newline at end of file
+diff --git a/src/vs/workbench/common/theme.ts b/src/vs/workbench/common/theme.ts
+index 8e5e6dab3d..2772aa195a 100644
+--- a/src/vs/workbench/common/theme.ts
++++ b/src/vs/workbench/common/theme.ts
+@@ -14,11 +14,11 @@ import { Color } from 'vs/base/common/color';
+ export function WORKBENCH_BACKGROUND(theme: ITheme): Color {
+ 	switch (theme.type) {
+ 		case 'dark':
+-			return Color.fromHex('#252526');
++			return Color.fromHex('#25252660');
+ 		case 'light':
+-			return Color.fromHex('#F3F3F3');
++			return Color.fromHex('#F3F3F360');
+ 		default:
+-			return Color.fromHex('#000000');
++			return Color.fromHex('#00000000');
+ 	}
+ }
+ 
+@@ -37,8 +37,8 @@ export const TAB_UNFOCUSED_ACTIVE_BACKGROUND = registerColor('tab.unfocusedActiv
+ }, nls.localize('tabUnfocusedActiveBackground', "Active tab background color in an unfocused group. Tabs are the containers for editors in the editor area. Multiple tabs can be opened in one editor group. There can be multiple editor groups."));
+ 
+ export const TAB_INACTIVE_BACKGROUND = registerColor('tab.inactiveBackground', {
+-	dark: '#2D2D2D',
+-	light: '#ECECEC',
++	dark: '#2D2D2D00',
++	light: '#ECECEC00',
+ 	hc: null
+ }, nls.localize('tabInactiveBackground', "Inactive tab background color. Tabs are the containers for editors in the editor area. Multiple tabs can be opened in one editor group. There can be multiple editor groups."));
+ 
+@@ -55,8 +55,8 @@ export const TAB_UNFOCUSED_HOVER_BACKGROUND = registerColor('tab.unfocusedHoverB
+ }, nls.localize('tabUnfocusedHoverBackground', "Tab background color in an unfocused group when hovering. Tabs are the containers for editors in the editor area. Multiple tabs can be opened in one editor group. There can be multiple editor groups."));
+ 
+ export const TAB_BORDER = registerColor('tab.border', {
+-	dark: '#252526',
+-	light: '#F3F3F3',
++	dark: '#ffffff40',
++	light: '#00000040',
+ 	hc: contrastBorder
+ }, nls.localize('tabBorder', "Border to separate tabs from each other. Tabs are the containers for editors in the editor area. Multiple tabs can be opened in one editor group. There can be multiple editor groups."));
+ 
+@@ -171,8 +171,8 @@ export const EDITOR_GROUP_FOCUSED_EMPTY_BORDER = registerColor('editorGroup.focu
+ }, nls.localize('editorGroupFocusedEmptyBorder', "Border color of an empty editor group that is focused. Editor groups are the containers of editors."));
+ 
+ export const EDITOR_GROUP_HEADER_TABS_BACKGROUND = registerColor('editorGroupHeader.tabsBackground', {
+-	dark: '#252526',
+-	light: '#F3F3F3',
++	dark: '#1d1d1de0',
++	light: '#ffffff77',
+ 	hc: null
+ }, nls.localize('tabsContainerBackground', "Background color of the editor group title header when tabs are enabled. Editor groups are the containers of editors."));
+ 
+@@ -267,14 +267,14 @@ export const STATUS_BAR_NO_FOLDER_FOREGROUND = registerColor('statusBar.noFolder
+ }, nls.localize('statusBarNoFolderForeground', "Status bar foreground color when no folder is opened. The status bar is shown in the bottom of the window."));
+ 
+ export const STATUS_BAR_BACKGROUND = registerColor('statusBar.background', {
+-	dark: '#007ACC',
+-	light: '#007ACC',
++	dark: '#005c99e0',
++	light: '#005c99e0',
+ 	hc: null
+ }, nls.localize('statusBarBackground', "Status bar background color when a workspace is opened. The status bar is shown in the bottom of the window."));
+ 
+ export const STATUS_BAR_NO_FOLDER_BACKGROUND = registerColor('statusBar.noFolderBackground', {
+-	dark: '#68217A',
+-	light: '#68217A',
++	dark: '#68217A80',
++	light: '#68217A80',
+ 	hc: null
+ }, nls.localize('statusBarNoFolderBackground', "Status bar background color when no folder is opened. The status bar is shown in the bottom of the window."));
+ 
+@@ -323,9 +323,9 @@ export const STATUS_BAR_PROMINENT_ITEM_HOVER_BACKGROUND = registerColor('statusB
+ // < --- Activity Bar --- >
+ 
+ export const ACTIVITY_BAR_BACKGROUND = registerColor('activityBar.background', {
+-	dark: '#333333',
+-	light: '#2C2C2C',
+-	hc: '#000000'
++	dark: '#111111e0',
++	light: '#FFFFFF99',
++	hc: '#111111e0'
+ }, nls.localize('activityBarBackground', "Activity bar background color. The activity bar is showing on the far left or right and allows to switch between views of the side bar."));
+ 
+ export const ACTIVITY_BAR_FOREGROUND = registerColor('activityBar.foreground', {
+@@ -395,9 +395,9 @@ export const EXTENSION_BADGE_REMOTE_FOREGROUND = registerColor('extensionBadge.r
+ // < --- Side Bar --- >
+ 
+ export const SIDE_BAR_BACKGROUND = registerColor('sideBar.background', {
+-	dark: '#252526',
+-	light: '#F3F3F3',
+-	hc: '#000000'
++	dark: '#1d1d1de0',
++	light: '#FFFFFF99',
++	hc: '#1d1d1de0'
+ }, nls.localize('sideBarBackground', "Side bar background color. The side bar is the container for views like explorer and search."));
+ 
+ export const SIDE_BAR_FOREGROUND = registerColor('sideBar.foreground', {
+@@ -472,14 +472,14 @@ export const TITLE_BAR_INACTIVE_FOREGROUND = registerColor('titleBar.inactiveFor
+ }, nls.localize('titleBarInactiveForeground', "Title bar foreground when the window is inactive. Note that this color is currently only supported on macOS."));
+ 
+ export const TITLE_BAR_ACTIVE_BACKGROUND = registerColor('titleBar.activeBackground', {
+-	dark: '#3C3C3C',
+-	light: '#DDDDDD',
+-	hc: '#000000'
++	dark: '#111111e0',
++	light: '#ffffff99',
++	hc: '#111111e0'
+ }, nls.localize('titleBarActiveBackground', "Title bar background when the window is active. Note that this color is currently only supported on macOS."));
+ 
+ export const TITLE_BAR_INACTIVE_BACKGROUND = registerColor('titleBar.inactiveBackground', {
+-	dark: transparent(TITLE_BAR_ACTIVE_BACKGROUND, 0.6),
+-	light: transparent(TITLE_BAR_ACTIVE_BACKGROUND, 0.6),
++	dark: transparent(TITLE_BAR_ACTIVE_BACKGROUND, 1),
++	light: transparent(TITLE_BAR_ACTIVE_BACKGROUND, 1),
+ 	hc: null
+ }, nls.localize('titleBarInactiveBackground', "Title bar background when the window is inactive. Note that this color is currently only supported on macOS."));
+ 
+diff --git a/src/vs/workbench/contrib/terminal/browser/media/terminal.css b/src/vs/workbench/contrib/terminal/browser/media/terminal.css
+index 4009bfe4cf..9df92c0244 100644
+--- a/src/vs/workbench/contrib/terminal/browser/media/terminal.css
++++ b/src/vs/workbench/contrib/terminal/browser/media/terminal.css
+@@ -67,6 +67,10 @@
+ 	top: auto;
+ }
+ 
++.monaco-workbench .panel.integrated-terminal .xterm-rows {
++	background-color: transparent;
++}
++
+ .monaco-workbench .panel.integrated-terminal {
+ 	font-variant-ligatures: none;
+ }
